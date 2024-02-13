@@ -11,7 +11,9 @@ import (
 	"root-histoty-service/internal"
 	"root-histoty-service/internal/converter"
 	"root-histoty-service/internal/dto/request"
+	"root-histoty-service/internal/middleware"
 	"strconv"
+	"time"
 )
 
 type Server struct {
@@ -19,6 +21,11 @@ type Server struct {
 	logger *logrus.Logger
 	r      *echo.Echo
 	p      internal.PlayerService
+}
+
+type tokenResponse struct {
+	Message        string `json:"message"`
+	AccessTokenTTL int64  `json:"access_token_ttl"`
 }
 
 func NewServer(cfg *config.ServerConfig, logger *logrus.Logger, p internal.PlayerService) *Server {
@@ -33,7 +40,7 @@ func NewServer(cfg *config.ServerConfig, logger *logrus.Logger, p internal.Playe
 func (s *Server) StartRouter() {
 	srv := http.Server{
 		Addr:    "localhost:" + s.cfg.Port,
-		Handler: s.r,
+		Handler: middleware.Cors(s.r),
 	}
 	s.logger.Info("server is running....")
 	err := srv.ListenAndServe()
@@ -63,20 +70,55 @@ func (s *Server) Register(ctx echo.Context) error {
 }
 
 func (s *Server) Authorize(ctx echo.Context) error {
-	login := ctx.QueryParam("login")
+	login := ctx.QueryParam("name")
 	pinCodeStr := ctx.QueryParam("pin-code")
 	pinCode, err := s.parsePinCode(pinCodeStr)
 	if err != nil {
 		return ctx.JSON(http.StatusBadRequest, "invalid pin code. Please provide a valid numeric pin code")
 	}
 
-	token, err := s.p.Authorize(ctx.Request().Context(), login, pinCode)
+	tokens, err := s.p.Authorize(ctx.Request().Context(), login, pinCode)
 	ctx.SetCookie(&http.Cookie{
-		Name:  "token",
-		Value: token,
-		Path:  "/user",
+		Name:     "refresh-token",
+		Value:    tokens.RefreshToken,
+		Path:     "/user/refresh-tokens",
+		HttpOnly: true,
+		MaxAge:   180,
 	})
-	return ctx.JSON(http.StatusOK, "authorized")
+
+	logrus.Info("tokens.AccessTokenExpireAt: ", tokens.AccessTokenExpireAt)
+	logrus.Info(time.Unix(tokens.AccessTokenExpireAt, 0))
+	ctx.SetCookie(&http.Cookie{
+		Name:   "access-token",
+		Value:  tokens.AccessToken,
+		Path:   "/",
+		MaxAge: 60,
+	})
+
+	return ctx.JSON(http.StatusOK, tokenResponse{
+		Message:        "authorized",
+		AccessTokenTTL: tokens.AccessTokenExpireAt,
+	})
+}
+
+func (s *Server) RefreshToken(ctx echo.Context) error {
+	refreshToken, err := ctx.Cookie("refresh-token")
+	if err != nil {
+		return ctx.JSON(http.StatusBadRequest, "refresh token not found")
+	}
+	tokens, err := s.p.RefreshTokens(ctx.Request().Context(), refreshToken.Value)
+	ctx.SetCookie(&http.Cookie{
+		Name:  "refresh-token",
+		Value: tokens.RefreshToken,
+		Path:  "/user/refresh-token",
+	})
+	ctx.SetCookie(&http.Cookie{
+		Name:   "access-token",
+		Value:  tokens.AccessToken,
+		Path:   "/",
+		MaxAge: 60,
+	})
+	return ctx.JSON(http.StatusOK, "token refreshed")
 }
 
 func (s *Server) GetUserInfo(ctx echo.Context) error {
@@ -87,7 +129,7 @@ func (s *Server) GetUserInfo(ctx echo.Context) error {
 
 func (s *Server) parsePlayerData(ctx echo.Context) (*request.CreatePlayerRequest, error) {
 	playerName := ctx.FormValue("name")
-	pinCodeStr := ctx.FormValue("pin_code")
+	pinCodeStr := ctx.FormValue("pinCode")
 	pinCode, err := s.parsePinCode(pinCodeStr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid pin code. Please provide a valid numeric pin code")

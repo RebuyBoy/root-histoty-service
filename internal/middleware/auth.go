@@ -10,7 +10,7 @@ import (
 func Auth(keyword string, l *logrus.Logger) func(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		fn := func(c echo.Context) error {
-			tokenCookie, err := c.Cookie("token")
+			tokenCookie, err := c.Cookie("access_token")
 			if err != nil {
 				return echo.NewHTTPError(http.StatusUnauthorized, "Unauthorized")
 			}

@@ -3,6 +3,7 @@ package internal
 import (
 	"context"
 	"root-histoty-service/internal/model"
+	"root-histoty-service/internal/service"
 )
 
 type UserRepo interface {
@@ -14,7 +15,8 @@ type UserRepo interface {
 
 type PlayerService interface {
 	Register(ctx context.Context, user *model.Player) error
-	Authorize(ctx context.Context, login string, pinCode int) (string, error)
+	Authorize(ctx context.Context, login string, pinCode int) (*service.Tokens, error)
 	GetUserByName(ctx context.Context, name string) (*model.Player, error)
+	RefreshTokens(ctx context.Context, refreshToken string) (*service.Tokens, error)
 	//GetUserById(id string) (*model.Player, error)
 }

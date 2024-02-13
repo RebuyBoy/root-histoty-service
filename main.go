@@ -12,6 +12,7 @@ import (
 	"root-histoty-service/internal/controller"
 	"root-histoty-service/internal/repository"
 	"root-histoty-service/internal/service"
+	"root-histoty-service/pkg/auth"
 )
 
 func main() {
@@ -37,9 +38,10 @@ func main() {
 	if err != nil {
 		log.Warning(err)
 	}
+	tokenManager, err := auth.NewTokenManager(config.GetServerConfig().SecretWord, 60, 180)
 
 	serverConfig := config.GetServerConfig()
-	playerService := service.NewPlayerService(userRepo, log, serverConfig.SecretWord)
+	playerService := service.NewPlayerService(userRepo, log, tokenManager)
 	srv := controller.NewServer(&serverConfig, log, playerService)
 
 	srv.RegisterRoutes()

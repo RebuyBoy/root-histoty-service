@@ -4,28 +4,33 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
-	"root-histoty-service/internal"
 	"root-histoty-service/internal/model"
+	"root-histoty-service/internal/repository"
+	"root-histoty-service/pkg/auth"
 	"time"
 )
 
 type PlayerService struct {
-	userRepo   internal.UserRepo
-	logger     *logrus.Logger
-	secretWord string
+	userRepo     *repository.UserRepo
+	logger       *logrus.Logger
+	tokenManager auth.TokenManager
 }
 
-type CustomClaims struct {
-	UserID string `json:"user_id"`
-	//Username string `json:"username"`
-	jwt.RegisteredClaims
+type Tokens struct {
+	AccessToken          string
+	RefreshToken         string
+	AccessTokenExpireAt  int64
+	RefreshTokenExpireAt int64
 }
 
-func NewPlayerService(userRepo internal.UserRepo, logger *logrus.Logger, secretWord string) *PlayerService {
-	return &PlayerService{userRepo: userRepo, logger: logger, secretWord: secretWord}
+func NewPlayerService(userRepo *repository.UserRepo, logger *logrus.Logger, tokenManager auth.TokenManager) *PlayerService {
+	return &PlayerService{
+		userRepo:     userRepo,
+		logger:       logger,
+		tokenManager: tokenManager,
+	}
 }
 
 func (p *PlayerService) Register(ctx context.Context, user *model.Player) error {
@@ -50,29 +55,41 @@ func (p *PlayerService) GetUserByName(ctx context.Context, name string) (*model.
 	return p.userRepo.GetUserByName(ctx, name)
 }
 
-func (p *PlayerService) Authorize(ctx context.Context, login string, pinCode int) (string, error) {
+func (p *PlayerService) Authorize(ctx context.Context, login string, pinCode int) (*Tokens, error) {
 	user, err := p.userRepo.GetUserByName(ctx, login)
 	if err != nil {
-		return "", err
+		return nil, fmt.Errorf("user not found: %w", err)
 	}
 	if user.PinCode != pinCode {
-		return "", errors.New("invalid pin code")
+		return nil, fmt.Errorf("invalid pin code: %w", err)
 	}
-	now := time.Now()
+	return p.createSession(user.ID)
+}
 
-	claims := CustomClaims{
-		UserID: user.ID,
-		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    user.ID,
-			ExpiresAt: jwt.NewNumericDate(now.Add(10 * time.Second)),
-			IssuedAt:  jwt.NewNumericDate(now),
-		},
-	}
+func (p *PlayerService) createSession(userId string) (*Tokens, error) {
+	var res Tokens
+	accessToken, err := p.tokenManager.NewAccessToken(userId)
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte(p.secretWord))
+	res.AccessToken = accessToken.Token
+	res.AccessTokenExpireAt = accessToken.ExpiredAt
+
 	if err != nil {
-		return "", fmt.Errorf("failed to sigh token: %w", err)
+		return nil, fmt.Errorf("failed to sigh token: %w", err)
 	}
-	return tokenString, nil
+
+	refreshToken, err := p.tokenManager.NewRefreshToken(userId)
+	if err != nil {
+		return nil, fmt.Errorf("failed to sigh token: %w", err)
+	}
+	res.RefreshToken = refreshToken.Token
+	res.RefreshTokenExpireAt = refreshToken.ExpiredAt
+	if err != nil {
+		return nil, fmt.Errorf("failed to sigh token: %w", err)
+	}
+
+	return &res, nil
+}
+
+func (p *PlayerService) RefreshTokens(ctx context.Context, refreshTokenId string) (*Tokens, error) {
+	return nil, nil
 }
